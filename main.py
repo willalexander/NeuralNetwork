@@ -1,25 +1,30 @@
-import numpy as np 
-from copy import deepcopy
-import matplotlib.pyplot as plt
+import numpy as np
+from statistics import NormalDist
+import math
 
-N = 4
-learning_rate = 0.0001
+# Learning Rate
+learning_rate = 0.001
 
+# Number of hidden units
+K = 4
+
+# Number of output units
+O = 10
+
+# Predictor variables
 X = np.array([
-    [2, 6],
-    [4, 1],
-    [3, 8],
-    [7, 5]
+    [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
 ])
 
+# Response variables
 Y = np.array([
-    [8],
-    [5],
-    [11],
-    [12]
+    [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
 ])
 
-X_aug = np.append(np.array([[1], [1], [1], [1]]), X, axis=1)
+# Number of observations
+N = X.shape[0]
+
+X_aug = np.append(np.ones((N, 1)), X, axis=1)
 
 
 def activation(x):
@@ -28,111 +33,99 @@ def activation(x):
 def activation_1(x):
     return 0 if x <= 0 else 1
 
+def varclamp(var):
+    return np.maximum(var, 0.000001)
+
+def varclamp_1(var):
+    return 0 if var <= 0.000001 else 1
+
+
+
 def cost(x, y):
     return pow(x - y, 2)
 
-def compute_output(X, alpha, beta):
-    N = X.shape[0]
-    Yhat = np.zeros(N)
+def compute_output(X_aug, alpha, beta):
+    Yhat = np.zeros((N, O))
     for i in range(N):
-        hidden_layer = np.matmul(alpha, X[i])
+        hidden_layer = np.matmul(alpha, X_aug[i])
         hidden_layer_act = activation(hidden_layer)
         hidden_layer_aug = np.append(1, hidden_layer_act)
-        Yhat[i] = np.matmul(np.transpose(beta), hidden_layer_aug)
+        Yhat[i] = np.matmul(beta, hidden_layer_aug)
+        Yhat[i][9] = varclamp(Yhat[i][9])
     return Yhat
 
+def multivariate_gaussian_likelihood(X, mean, variance):
+    result = 1
+    for i in range(len(X)):
+        result *= NormalDist(mu=mean[i], sigma=np.sqrt(variance)).pdf(X[i])
+    return result
+
 def compute_loss(Y, Yhat):
-    #print('\n\n')
-    #print(Y)
-    Yhat2 = Yhat.reshape(1, 4).transpose()
-    #print(Yhat2)
-    #print(Y - Yhat2)
-    #print(np.power(Y - Yhat2, 2.0))
-    #print(np.sum(np.power(Y - Yhat2, 2.0)))
-    return np.sum(np.power(Y - Yhat2, 2.0))
-
-
+    result = 0
+    for i in range(N):
+        result += multivariate_gaussian_likelihood(Y[i], Yhat[i][0:O-1], Yhat[i][O-1])
+    return -1 * result
 
 def compute_grad(alpha, beta, X, Y, Yhat):
-    b_grad = np.zeros(5)
-    for i in range(N):
-        b_grad_i = np.zeros(5)
-        for j in range(5):
-            if j == 1:
-                alphaj_Xi = 1.0
-            else:
-                alphaj_Xi = np.matmul(alpha[j - 1], X[i])
-            b_grad_i[j] = 2 * (Yhat[i] - Y[i]) * activation(alphaj_Xi)
-        b_grad += b_grad_i
+    i = 0
+    H0 = np.matmul(alpha, X_aug[i])
+    H = activation(H0)
+    H_aug = np.append(1, H)
 
-    a_grad = np.zeros((4, 3))
-    for i in range(N):
-        a_grad_i = np.zeros((4, 3))
-        for j in range(4):
-            for k in range(3):
-                a_grad_i[j][k] = 2 * (Yhat[i] - Y[i]) * beta[j] * activation_1(np.matmul(alpha[j], X[i])) * X[i][k]
-        a_grad += a_grad_i
+    variance = Yhat[i][9]
+    input_length = X_aug.shape[1]
 
+    b_grad = np.zeros((O, K + 1))
+    for l in range(9):
+        b_grad[l] = -1 * (1 / variance) * (Y[i][l] - Yhat[i][l]) * H_aug
+    b_grad[9] = 1 * (9/2) * (1 / variance) * (Y[i][l] - Yhat[i][l]) * H_aug * varclamp_1(variance)
+
+    a_grad = np.zeros((K, input_length))
+    for j in range(K):
+        for k in range(input_length):
+            mean_component = 0
+            for p in range(input_length - 1):
+                mean_component += -1 * (1 / variance) * (Y[i][p] - Yhat[i][p]) * beta[p][j] * activation_1(H0[j]) * X_aug[i][k]
+            a_grad[j][k] = 1 * (9 / 2) * (1 / variance) * beta[9, j] * activation_1(H0[j]) * X_aug[i][k] * varclamp_1(variance) + mean_component
     return a_grad, b_grad
 
-alpha = np.array([
-    [-0.2373,  0.4209,  0.0018],
-    [-0.0219, -0.0093, -0.3173],
-    [0.2384, -0.0101,  0.3405],
-    [-0.0094,  0.2039, -0.3998]
-])
+alpha = np.random.random((K, X_aug.shape[1])) - 0.5
+beta = np.random.random((O, K + 1)) - 0.5
 
-beta = np.array([
-    [0.1246],
-    [-0.1108],
-    [0.3166],
-    [-0.494],
-    [0.3031]
-])
+np.set_printoptions(linewidth=2000)
+
+
+print(Y[0])
+
+print("\n")
 
 for epoch in range(1000):
-    print("\nEpoch {}".format(epoch))
+    Yhat = compute_output(X_aug, alpha, beta)
+    Yhat[0][9] = 1.0
+    loss = compute_loss(Y, Yhat)
+    ideal_loss = compute_loss(Y, np.array([[1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0]]))
 
-    Y_hat = compute_output(X_aug, alpha, beta)
-    #print("Yhat: {}".format(Y_hat))
+    
+    print(Yhat[0][0:9])
+    print(Yhat[0][9])
+    print("Loss: {}. Ideal loss: {}".format(loss, ideal_loss))
 
-    loss = compute_loss(Y, Y_hat)
-    print("loss: {}".format(loss))
+    
 
-    a_grad, b_grad = compute_grad(alpha, beta, X_aug, Y, Y_hat)
+    #Yhat = np.array([
+    #    [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.00001]
+    #])
 
-    #print("a_grad: {} b_grad: {}".format(a_grad, b_grad))
+    #loss = compute_loss(Y, Yhat)
+    #print('Epoch #{}. Loss: {}'.format(epoch, loss))
+    #if math.isnan(loss):
+    #    break
 
+    a_grad, b_grad = compute_grad(alpha, beta, X, Y, Yhat)
     alpha -= learning_rate * a_grad
-    beta -= learning_rate * b_grad.reshape(1,5).transpose()
-
-    #print(Y_hat)
+    beta -= learning_rate * b_grad
 
 
-test_set = np.array([
-    [7, 4],
-    [2, 8],
-    [1, 4],
-    [8, 3],
-])
+    #Yhat = compute_output(X_aug, alpha, beta)
+    #print(Yhat[0][0:9])
 
-test_set_aug = np.append(np.array([[1], [1], [1], [1]]), test_set, axis=1)
-Yhat = compute_output(test_set_aug, alpha, beta)
-
-'''
-for i in range(4):
-    print("{} + {} = {} (pred) {} (actual)".format(
-        test_set[i][0],
-        test_set[i][1],
-        int(Yhat[i]),
-        (test_set[i][0] + test_set[i][1])))
-'''
-
-
-
-
-#print(0.5 - np.random.random(size=12))
-
-#print(X)
-#print(X2)
-#print(Y)
